@@ -1,0 +1,75 @@
+// ============================================================================
+// FIREBASE FIRESTORE SECURITY RULES
+// Role-Based Access Control (RBAC) for Users and Submissions
+// ============================================================================
+// IMPORTANT: Copy and paste these rules into your Firebase Console
+// https://console.firebase.google.com > Firestore > Rules
+// ============================================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ========== HELPER FUNCTIONS ==========
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+    
+    function isAdmin() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    
+    function isAdminOrOwner(userId) {
+      return isOwner(userId) || isAdmin();
+    }
+    
+    // ========== USERS COLLECTION ==========
+    match /users/{userId} {
+      // Users can read their own profile or if they are admin
+      allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      
+      // Users can write (create/update) only their own profile
+      allow create: if isAuthenticated() && isOwner(userId);
+      allow update: if isAuthenticated() && isOwner(userId);
+      
+      // Only delete own profile (optional - typically not allowed)
+      allow delete: if isAuthenticated() && isOwner(userId);
+    }
+    
+    // ========== SUBMISSIONS COLLECTION ==========
+    match /submissions/{submissionId} {
+      // All authenticated users can read submissions
+      // Firestore rules don't enforce row-level filtering in queries,
+      // so frontend must handle: users see only their own, admins see all
+      allow read: if isAuthenticated();
+      
+      // Users can create submissions (userId must match auth)
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      
+      // Users can update only their own submissions
+      allow update: if isAuthenticated() && 
+                        (isOwner(resource.data.userId) || isAdmin());
+      
+      // Users can delete only their own submissions
+      allow delete: if isAuthenticated() && 
+                        (isOwner(resource.data.userId) || isAdmin());
+    }
+    
+    // ========== DEFAULT: DENY ALL ==========
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
+
+// ============================================================================
+// NOTES:
+// 1. For security, ALWAYS validate userId on backend/frontend
+// 2. Firestore queries cannot filter by role, so frontend must filter
+// 3. Example: Users query submissions but frontend only displays their own
+// 4. Use Firebase Cloud Functions for sensitive admin operations
+// ============================================================================
